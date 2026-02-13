@@ -1,6 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from "discord.js";
 import { sendDigestToConfiguredChannel } from "../digest.js";
 import { Category } from "../feeds.js";
+import { logger } from "../utils/logger.js";
 import { ChatCommand, CommandContext } from "./types.js";
 
 const categoryChoices: { name: string; value: Category | "all" }[] = [
@@ -38,7 +39,14 @@ export const digestCommand: ChatCommand = {
     const category = (interaction.options.getString("category") ?? "all") as Category | "all";
     const limit = interaction.options.getInteger("limit") ?? undefined;
 
-    await sendDigestToConfiguredChannel(interaction.client, context.config, { category, limit });
-    await interaction.editReply("Digest envoye dans le salon configure.");
+    try {
+      await sendDigestToConfiguredChannel(interaction.client, context.config, { category, limit });
+      await interaction.editReply("Digest envoye dans le salon configure.");
+    } catch (error) {
+      logger.error("Digest command failed", error);
+      await interaction.editReply(
+        "Impossible d'envoyer le digest. Verifie DISCORD_CHANNEL_ID et les permissions du bot (View Channel + Send Messages)."
+      );
+    }
   }
 };
