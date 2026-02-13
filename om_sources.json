@@ -1,0 +1,55 @@
+{
+  "direct_feeds": [
+    "https://news.google.com/rss/search?q=Olympique+de+Marseille&hl=fr&gl=FR&ceid=FR:fr",
+    "https://news.google.com/rss/search?q=OM+mercato&hl=fr&gl=FR&ceid=FR:fr",
+    "https://news.google.com/rss/search?q=Ligue+1+Marseille&hl=fr&gl=FR&ceid=FR:fr"
+  ],
+  "fallback_aggregator_feeds": [
+    "https://news.google.com/rss/search?q=Marseille+football+transfert&hl=fr&gl=FR&ceid=FR:fr"
+  ],
+  "journalist_sources": [
+    "Fabrizio Romano",
+    "Santi Aouna",
+    "Alex Journaliste",
+    "ActuOMFada"
+  ],
+  "official_domains": [
+    "om.fr",
+    "ligue1.fr",
+    "uefa.com"
+  ],
+  "top_tier_domains": [
+    "lequipe.fr",
+    "rmcsport.bfmtv.com",
+    "eurosport.fr",
+    "francefootball.fr",
+    "reuters.com",
+    "afp.com"
+  ],
+  "sports_domains": [
+    "footmercato.net",
+    "madeinfoot.com",
+    "sofoot.com",
+    "maxifoot.fr"
+  ],
+  "blog_domains": [
+    "lephoceen.fr",
+    "footballclubdemarseille.fr",
+    "planetemarseille.fr"
+  ],
+  "top_tier_journalists": [
+    "Fabrizio Romano",
+    "Santi Aouna"
+  ],
+  "trusted_journalists": [
+    "Fabrizio Romano",
+    "Santi Aouna",
+    "Alex Journaliste",
+    "ActuOMFada"
+  ],
+  "insider_sources": [
+    "Fabrizio Romano",
+    "Santi Aouna",
+    "ActuOMFada"
+  ]
+}

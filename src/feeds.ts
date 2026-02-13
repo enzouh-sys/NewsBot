@@ -18,7 +18,21 @@ export type FeedItemNormalized = {
   category: Category;
 };
 
+export type OmSourcesConfig = {
+  direct_feeds: string[];
+  fallback_aggregator_feeds: string[];
+  journalist_sources: string[];
+  official_domains: string[];
+  top_tier_domains: string[];
+  sports_domains: string[];
+  blog_domains: string[];
+  top_tier_journalists: string[];
+  trusted_journalists: string[];
+  insider_sources: string[];
+};
+
 const FEEDS_FILE_PATH = path.resolve(process.cwd(), "feeds.json");
+const OM_SOURCES_FILE_PATH = path.resolve(process.cwd(), "om_sources.json");
 
 export const categoryLabels: Record<Category, string> = {
   om: "\uD83D\uDD35\u26AA OM",
@@ -27,7 +41,7 @@ export const categoryLabels: Record<Category, string> = {
 };
 
 export const strictAllowlist: Record<Category, string[]> = {
-  om: ["om.fr", "lequipe.fr", "uefa.com", "ligue1.fr", "francefootball.fr", "rmc.bfmtv.com"],
+  om: [],
   ai_tech: [
     "openai.com",
     "anthropic.com",
@@ -54,20 +68,56 @@ export async function loadFeeds(): Promise<FeedConfig> {
   const parsed = JSON.parse(raw) as Partial<FeedConfig>;
 
   return {
-    om: ensureStringArray(parsed.om, "om"),
-    ai_tech: ensureStringArray(parsed.ai_tech, "ai_tech"),
-    gaming: ensureStringArray(parsed.gaming, "gaming")
+    om: ensureCategoryArray(parsed.om, "om"),
+    ai_tech: ensureCategoryArray(parsed.ai_tech, "ai_tech"),
+    gaming: ensureCategoryArray(parsed.gaming, "gaming")
   };
 }
 
-function ensureStringArray(value: unknown, key: Category): string[] {
+export async function loadOmSourcesConfig(): Promise<OmSourcesConfig> {
+  const raw = await readFile(OM_SOURCES_FILE_PATH, "utf8");
+  const parsed = JSON.parse(raw) as Partial<OmSourcesConfig>;
+
+  return {
+    direct_feeds: ensureConfigArray(parsed.direct_feeds, "direct_feeds"),
+    fallback_aggregator_feeds: ensureConfigArray(
+      parsed.fallback_aggregator_feeds,
+      "fallback_aggregator_feeds"
+    ),
+    journalist_sources: ensureConfigArray(parsed.journalist_sources, "journalist_sources"),
+    official_domains: ensureConfigArray(parsed.official_domains, "official_domains"),
+    top_tier_domains: ensureConfigArray(parsed.top_tier_domains, "top_tier_domains"),
+    sports_domains: ensureConfigArray(parsed.sports_domains, "sports_domains"),
+    blog_domains: ensureConfigArray(parsed.blog_domains, "blog_domains"),
+    top_tier_journalists: ensureConfigArray(parsed.top_tier_journalists, "top_tier_journalists"),
+    trusted_journalists: ensureConfigArray(parsed.trusted_journalists, "trusted_journalists"),
+    insider_sources: ensureConfigArray(parsed.insider_sources, "insider_sources")
+  };
+}
+
+function ensureCategoryArray(value: unknown, key: Category): string[] {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
     throw new Error(`feeds.json invalid: "${key}" must be an array of URLs`);
   }
   return value;
 }
 
+function ensureConfigArray(value: unknown, key: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`om_sources.json invalid: "${key}" must be an array of strings`);
+  }
+  return value;
+}
+
+export function buildGoogleNewsRssQuery(sourceName: string): string {
+  const query = `${sourceName} OM OR Olympique de Marseille`;
+  return `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=fr&gl=FR&ceid=FR:fr`;
+}
+
 export function isAllowedDomain(category: Category, url: string): boolean {
+  if (category === "om") {
+    return true;
+  }
   try {
     const host = new URL(url).hostname.toLowerCase();
     return strictAllowlist[category].some((allowed) => host === allowed || host.endsWith(`.${allowed}`));

@@ -1,8 +1,8 @@
 {
   "om": [
-    "https://www.om.fr/fr/actualites/rss.xml",
-    "https://www.lequipe.fr/rss/actu_rss_Football.xml",
-    "https://www.uefa.com/uefachampionsleague/news/rss"
+    "https://news.google.com/rss/search?q=Olympique+de+Marseille+officiel&hl=fr&gl=FR&ceid=FR:fr",
+    "https://news.google.com/rss/search?q=OM+mercato+Fabrizio+Romano&hl=fr&gl=FR&ceid=FR:fr",
+    "https://news.google.com/rss/search?q=OM+transfert+Ligue+1&hl=fr&gl=FR&ceid=FR:fr"
   ],
   "ai_tech": [
     "https://openai.com/news/rss.xml",

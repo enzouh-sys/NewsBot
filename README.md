@@ -60,9 +60,16 @@ Le fichier `feeds.json` contient 3 sections fixes:
 Chaque section contient des URLs RSS d'exemple. Tu peux tout remplacer.
 Si une source ne propose pas de RSS, ne pas inventer d'URL: remplace-la par une source avec flux RSS valide.
 
+Pour la section OM, la strategie avancee est dans `om_sources.json`:
+- sources directes
+- journalistes / insiders (monitoring via Google News RSS)
+- fallback agregateurs
+- listes de domaines / journalistes pour le scoring de credibilite
+
 ## STRICT_MODE
 
-Quand `STRICT_MODE=true`, le bot filtre les items par allowlist de domaines par section (`om`, `ai_tech`, `gaming`) pour reduire les rumeurs/sources douteuses.
+Quand `STRICT_MODE=true`, le bot filtre les items par allowlist de domaines pour `ai_tech` et `gaming`.
+La section OM n'utilise pas d'allowlist stricte: elle applique un scoring de credibilite (🟢🟡🟠🔴).
 
 ## Robustesse RSS
 

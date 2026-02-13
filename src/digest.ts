@@ -2,14 +2,18 @@ import { ChannelType, Client } from "discord.js";
 import Parser from "rss-parser";
 import { LinkCache } from "./cache.js";
 import {
+  buildGoogleNewsRssQuery,
   Category,
   FeedConfig,
   FeedItemNormalized,
+  OmSourcesConfig,
   categoryLabels,
   isAllowedDomain,
-  loadFeeds
+  loadFeeds,
+  loadOmSourcesConfig
 } from "./feeds.js";
 import { logger } from "./utils/logger.js";
+import { buildHookLine } from "./utils/hookBuilder.js";
 
 const RSS_FETCH_LIMIT = 10;
 const RSS_TIMEOUT_MS = 8000;
@@ -20,6 +24,7 @@ const BULLET = "\u2022";
 
 const BASE_ITEMS_PER_SECTION = 3;
 const MAX_ITEMS_PER_SECTION = 5;
+const OM_MAX_ITEMS = 12;
 
 const INTRO_LINES = [
   "Je me suis leve tot pour fouiller les flux, comme ca t'as juste a lire.",
@@ -29,7 +34,7 @@ const INTRO_LINES = [
   "Cafe pour moi, digest pour toi: voici ce qui vaut vraiment le coup.",
   "J'ai filtre le bruit du web ce matin, tu recuperes juste l'essentiel.",
   "J'ai fouille internet de bon matin pour t'eviter de le faire toi-meme.",
-  "Le tri est deja fait: tu peux commencer ta journee sans scroller partout.",
+  "Le tri est deja fait: tu peux commencer ta journee sans faire defiler partout.",
   "J'ai ramasse les infos importantes avant 9h, tu n'as plus qu'a parcourir.",
   "Mission matinale terminee: les actus utiles sont pretes.",
   "J'ai passe les flux au tamis pendant que ton cafe refroidissait.",
@@ -37,8 +42,8 @@ const INTRO_LINES = [
   "J'ai deja fait le tri, tu peux faire semblant d'etre ultra informe.",
   "Les actus sont rangees, classees, et servies sans effort de ta part.",
   "Tu voulais l'essentiel sans perdre 40 minutes? C'est fait.",
-  "J'ai fait le sprint matinal sur les RSS, tu recoltes le resultat.",
-  "J'ai filtre les titres clickbait, il reste du concret.",
+  "J'ai fait la course matinale sur les flux RSS, tu recoltes le resultat.",
+  "J'ai filtre les titres pieges, il reste du concret.",
   "Les infos du matin sont pretes, toi tu restes en mode economie d'energie.",
   "J'ai compile ce qu'il fallait savoir avant que la journee parte dans tous les sens.",
   "J'ai lu le bazar internet pour t'eviter la punition.",
@@ -54,31 +59,31 @@ const INTRO_LINES = [
   "La recolte est terminee: que du pertinent.",
   "J'ai separe l'utile du decoratif, cadeau.",
   "J'ai fait le tri sans pitie, tu recuperes le meilleur.",
-  "Je t'ai economise le scroll inutile de bon matin.",
+  "Je t'ai economise le defilement inutile de bon matin.",
   "C'est pret: infos claires, ordre logique, zero detour.",
   "J'ai fait l'inspection matinale des flux, verdict ci-dessous.",
   "J'ai lu, compare, coupe, puis garde l'essentiel.",
-  "Tu voulais un recap propre sans fouiller partout: le voila.",
-  "Le digest est pret, le chaos internet est reste dehors.",
+  "Tu voulais un recapitulatif propre sans fouiller partout: le voila.",
+  "Le recapitulatif est pret, le chaos internet est reste dehors.",
   "J'ai fait la partie penible, profite de la version concise.",
   "J'ai sorti la version matinale pour humains presses.",
   "Le filtre est passe: seulement les infos qui se defendent.",
   "Tu peux gagner du temps, j'ai deja fait le boulot de veille.",
   "Je t'evite les onglets en cascade, tout est ici.",
-  "J'ai fait un recap qui va droit au but, sans cinema.",
+  "J'ai fait un recapitulatif qui va droit au but, sans mise en scene.",
   "Les flux ont parle, j'ai garde ce qui tient la route.",
-  "J'ai fait la pre-selection severe, tu lis le top.",
+  "J'ai fait la pre-selection severe, tu lis le meilleur.",
   "La veille est bouclee: reste juste a parcourir.",
   "J'ai condense la matinee en quelques lignes utiles.",
   "Tu n'as rien manque d'important, j'ai verrouille la veille.",
-  "J'ai fait le travail de fond, version digest instantane.",
+  "J'ai fait le travail de fond, version recapitulatif instantane.",
   "Tout est trie, horodate mentalement et avance.",
   "J'ai isole les signaux forts pour t'eviter la pollution info.",
   "Tu voulais rapide et clair: mission tenue.",
-  "J'ai transforme le flux brut en recap lisible.",
+  "J'ai transforme le flux brut en recapitulatif lisible.",
   "Les infos du matin ont deja ete apprivoisees.",
   "J'ai coupe le superflu, garde le necessaire.",
-  "Le recap est servi, sans bruit, sans detour, sans drame.",
+  "Le recapitulatif est servi, sans bruit, sans detour, sans drame.",
   "J'ai fait la tournee des sources pendant que la ville se reveillait.",
   "Ce que tu dois savoir est deja la, proprement emballe."
 ];
@@ -95,6 +100,30 @@ const OM_IMPORTANCE_KEYWORDS = [
   "signature",
   "ligue 1",
   "uefa"
+];
+
+const OM_RUMOR_KEYWORDS = [
+  "rumeur",
+  "piste",
+  "interet",
+  "intérêt",
+  "negociation",
+  "négociation",
+  "discussions",
+  "cible",
+  "ciblé",
+  "pourrait",
+  "envisage",
+  "envisagé"
+];
+
+const OM_OFFICIAL_KEYWORDS = [
+  "officiel",
+  "communique",
+  "communiqué",
+  "officialise",
+  "officialisé",
+  "annonce"
 ];
 
 const HIGHLIGHT_KEYWORDS: Record<Category, string[]> = {
@@ -148,50 +177,6 @@ const HIGHLIGHT_KEYWORDS: Record<Category, string[]> = {
   ]
 };
 
-const AI_TERMS = [
-  "OpenAI",
-  "Anthropic",
-  "Google",
-  "Meta",
-  "Microsoft",
-  "NVIDIA",
-  "ChatGPT",
-  "GPT-4",
-  "GPT-4o",
-  "Claude",
-  "Gemini",
-  "Llama",
-  "Copilot"
-];
-
-const GAMING_TERMS = [
-  "PlayStation 5",
-  "PS5",
-  "PlayStation",
-  "Xbox Series X|S",
-  "Xbox",
-  "Nintendo Switch",
-  "Nintendo",
-  "Steam",
-  "Game Pass"
-];
-
-const STOP_WORDS = new Set([
-  "Le",
-  "La",
-  "Les",
-  "Un",
-  "Une",
-  "Des",
-  "De",
-  "Du",
-  "OM",
-  "FC",
-  "IA",
-  "Tech",
-  "Gaming"
-]);
-
 type DigestConfig = {
   DISCORD_CHANNEL_ID: string;
   STRICT_MODE: boolean;
@@ -206,6 +191,17 @@ type FeedWithMeta = {
   feedUrl: string;
   category: Category;
 };
+
+function buildOmFeedList(baseFeeds: string[], omSources: OmSourcesConfig): string[] {
+  const journalistFeeds = omSources.journalist_sources.map((name) => buildGoogleNewsRssQuery(name));
+  const all = [
+    ...baseFeeds,
+    ...omSources.direct_feeds,
+    ...journalistFeeds,
+    ...omSources.fallback_aggregator_feeds
+  ];
+  return [...new Set(all)];
+}
 
 const parser = new Parser({
   timeout: RSS_TIMEOUT_MS,
@@ -270,12 +266,13 @@ async function sendInChunks(
 
 export async function buildDigestMessage(config: DigestConfig, options?: DigestOptions): Promise<string> {
   const feeds = await loadFeeds();
+  const omSources = await loadOmSourcesConfig();
   const cache = new LinkCache();
   await cache.init();
 
-  const allItems = await fetchAllItems(feeds, config.STRICT_MODE);
+  const allItems = await fetchAllItems(feeds, omSources, config.STRICT_MODE);
   const deduped = dedupeByCache(allItems, cache);
-  const selected = applyPerSectionSelection(deduped, options);
+  const selected = applyPerSectionSelection(deduped, options, omSources);
 
   for (const item of selected) {
     cache.add(item.link, item.isoDate);
@@ -283,12 +280,17 @@ export async function buildDigestMessage(config: DigestConfig, options?: DigestO
   cache.cleanup();
   await cache.persist();
 
-  return formatDigest(selected, options?.category ?? "all");
+  return formatDigest(selected, options?.category ?? "all", omSources);
 }
 
-async function fetchAllItems(feeds: FeedConfig, strictMode: boolean): Promise<FeedItemNormalized[]> {
+async function fetchAllItems(
+  feeds: FeedConfig,
+  omSources: OmSourcesConfig,
+  strictMode: boolean
+): Promise<FeedItemNormalized[]> {
+  const omFeedList = buildOmFeedList(feeds.om, omSources);
   const feedEntries: FeedWithMeta[] = [
-    ...feeds.om.map((feedUrl) => ({ feedUrl, category: "om" as const })),
+    ...omFeedList.map((feedUrl) => ({ feedUrl, category: "om" as const })),
     ...feeds.ai_tech.map((feedUrl) => ({ feedUrl, category: "ai_tech" as const })),
     ...feeds.gaming.map((feedUrl) => ({ feedUrl, category: "gaming" as const }))
   ];
@@ -318,7 +320,7 @@ async function fetchOneFeed(
         .filter((item): item is FeedItemNormalized => item !== null)
         .filter((item) => Date.parse(item.isoDate) >= recentCutoff);
 
-      if (!strictMode) {
+      if (!strictMode || category === "om") {
         return normalized;
       }
       return normalized.filter((item) => isAllowedDomain(category, item.link));
@@ -412,13 +414,6 @@ function limitSentence(sentence: string, max: number): string {
   return `${sentence.slice(0, max).trim()}...`;
 }
 
-function ensureSentenceEnd(input: string): string {
-  if (/[.!?]$/.test(input)) {
-    return input;
-  }
-  return `${input}.`;
-}
-
 function dedupeByCache(items: FeedItemNormalized[], cache: LinkCache): FeedItemNormalized[] {
   const localSet = new Set<string>();
   const out: FeedItemNormalized[] = [];
@@ -433,7 +428,11 @@ function dedupeByCache(items: FeedItemNormalized[], cache: LinkCache): FeedItemN
   return out;
 }
 
-function applyPerSectionSelection(items: FeedItemNormalized[], options?: DigestOptions): FeedItemNormalized[] {
+function applyPerSectionSelection(
+  items: FeedItemNormalized[],
+  options: DigestOptions | undefined,
+  omSources: OmSourcesConfig
+): FeedItemNormalized[] {
   const requested = options?.category ?? "all";
   const categories: Category[] =
     requested === "all" ? ["om", "ai_tech", "gaming"] : [requested as Category];
@@ -441,12 +440,24 @@ function applyPerSectionSelection(items: FeedItemNormalized[], options?: DigestO
   const selected: FeedItemNormalized[] = [];
 
   for (const category of categories) {
-    const sectionItems = items
-      .filter((item) => item.category === category)
-      .sort((a, b) => compareByImportanceThenDate(a, b));
+    const sectionItems = items.filter((item) => item.category === category);
 
-    const sectionLimit = options?.limit ?? computeDynamicSectionLimit(sectionItems);
-    selected.push(...sectionItems.slice(0, sectionLimit));
+    if (category === "om") {
+      const omSorted = sectionItems.sort((a, b) => {
+        const scoreDiff = scoreOmCredibility(b, omSources).score - scoreOmCredibility(a, omSources).score;
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+        return Date.parse(b.isoDate) - Date.parse(a.isoDate);
+      });
+      const sectionLimit = options?.limit ?? Math.min(OM_MAX_ITEMS, omSorted.length);
+      selected.push(...omSorted.slice(0, sectionLimit));
+      continue;
+    }
+
+    const sorted = sectionItems.sort((a, b) => compareByImportanceThenDate(a, b));
+    const sectionLimit = options?.limit ?? computeDynamicSectionLimit(sorted);
+    selected.push(...sorted.slice(0, sectionLimit));
   }
 
   return selected;
@@ -500,24 +511,141 @@ function computeImportanceScore(item: FeedItemNormalized): number {
   return score;
 }
 
-function formatDigest(items: FeedItemNormalized[], requestedCategory: Category | "all"): string {
+function scoreGenericCredibility(item: FeedItemNormalized): { emoji: "🟢" | "🟡" | "🟠" | "🔴" } {
+  const score = computeImportanceScore(item);
+  if (score >= 5) {
+    return { emoji: "🟢" };
+  }
+  if (score >= 3) {
+    return { emoji: "🟡" };
+  }
+  if (score >= 2) {
+    return { emoji: "🟠" };
+  }
+  return { emoji: "🔴" };
+}
+
+type OmCredibility = {
+  score: number;
+  emoji: "🟢" | "🟡" | "🟠" | "🔴";
+  level: "VERT" | "JAUNE" | "ORANGE" | "ROUGE";
+  isRumor: boolean;
+};
+
+function scoreOmCredibility(item: FeedItemNormalized, omSources: OmSourcesConfig): OmCredibility {
+  const text = `${item.title} ${item.summary} ${item.sourceName}`.toLowerCase();
+  const host = safeHostname(item.link).toLowerCase();
+
+  let score = 20;
+
+  if (matchesDomain(host, omSources.official_domains)) {
+    score += 55;
+  } else if (matchesDomain(host, omSources.top_tier_domains)) {
+    score += 40;
+  } else if (matchesDomain(host, omSources.sports_domains)) {
+    score += 25;
+  } else if (matchesDomain(host, omSources.blog_domains)) {
+    score += 12;
+  }
+
+  if (containsAny(text, OM_OFFICIAL_KEYWORDS)) {
+    score += 25;
+  }
+
+  if (containsAny(text, OM_IMPORTANCE_KEYWORDS)) {
+    score += 12;
+  }
+
+  const topTierJournalist = containsAny(text, omSources.top_tier_journalists);
+  const trustedJournalist = containsAny(text, omSources.trusted_journalists);
+  const insider = containsAny(text, omSources.insider_sources);
+
+  if (topTierJournalist) {
+    score += 30;
+  } else if (trustedJournalist) {
+    score += 22;
+  } else if (insider) {
+    score += 16;
+  }
+
+  const isOfficialType = containsAny(text, ["communique", "officiel", "officialise", "signature"]);
+  const isRumor = containsAny(text, OM_RUMOR_KEYWORDS);
+  if (isOfficialType) {
+    score += 10;
+  }
+  if (isRumor) {
+    score -= 8;
+  }
+
+  if (isRumor && !topTierJournalist) {
+    score = Math.min(score, 75);
+  }
+
+  score = Math.max(0, Math.min(100, score));
+  if (score >= 80) {
+    return { score, emoji: "🟢", level: "VERT", isRumor };
+  }
+  if (score >= 60) {
+    return { score, emoji: "🟡", level: "JAUNE", isRumor };
+  }
+  if (score >= 40) {
+    return { score, emoji: "🟠", level: "ORANGE", isRumor };
+  }
+  return { score, emoji: "🔴", level: "ROUGE", isRumor };
+}
+
+function matchesDomain(host: string, domains: string[]): boolean {
+  return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+function containsAny(text: string, words: string[]): boolean {
+  const lowered = text.toLowerCase();
+  return words.some((word) => lowered.includes(word.toLowerCase()));
+}
+
+function formatDigest(
+  items: FeedItemNormalized[],
+  requestedCategory: Category | "all",
+  omSources: OmSourcesConfig
+): string {
   const categories: Category[] =
     requestedCategory === "all" ? ["om", "ai_tech", "gaming"] : [requestedCategory];
 
   const lines: string[] = [pickIntroLine(), ""];
 
   for (const category of categories) {
-    lines.push(categoryLabels[category]);
     const section = items.filter((item) => item.category === category);
 
+    if (category === "om") {
+      lines.push("🔵⚪ OM — ACTU IMPORTANTE");
+      if (section.length === 0) {
+        lines.push(`${BULLET} Aucun item recent.`);
+      } else {
+        const mainItem = section[0];
+        lines.push(`🔥 INFO MAJEURE — ${mainItem.title}`);
+        lines.push("");
+        for (const item of section) {
+          const cred = scoreOmCredibility(item, omSources);
+          const hook = buildHookLine(item, "om");
+          lines.push(`${cred.emoji} **${hook}**`);
+          lines.push(`${item.title} — <${item.link}>`);
+          lines.push("");
+        }
+      }
+      lines.push("");
+      continue;
+    }
+
+    lines.push(categoryLabels[category]);
     if (section.length === 0) {
       lines.push(`${BULLET} Aucun item recent.`);
     } else {
       for (const item of section) {
-        lines.push(`${BULLET} **${item.title}**`);
-        lines.push(`  ${composeHumanNarrative(item)}`);
-        lines.push(`  ${composeOpinionLine(item)}`);
-        lines.push(`  Source: <${item.link}>`);
+        const quality = scoreGenericCredibility(item);
+        const hook = buildHookLine(item, item.category);
+        lines.push(`${quality.emoji} **${hook}**`);
+        lines.push(`${item.title} — <${item.link}>`);
+        lines.push("");
       }
     }
     lines.push("");
@@ -530,127 +658,6 @@ function formatDigest(items: FeedItemNormalized[], requestedCategory: Category |
 function pickIntroLine(): string {
   const index = Math.floor(Math.random() * INTRO_LINES.length);
   return INTRO_LINES[index] ?? INTRO_LINES[0];
-}
-
-function composeHumanNarrative(item: FeedItemNormalized): string {
-  const focus = extractKeyEntity(item);
-  const sentences = toSentences(item.summary)
-    .map((sentence) => ensureSentenceEnd(limitSentence(sentence, SUMMARY_SENTENCE_MAX)))
-    .filter((sentence) => sentence.length > 0);
-
-  const selectedSentences = sentences.slice(0, 2);
-  if (selectedSentences.length === 0) {
-    selectedSentences.push(`L'information essentielle concerne ${item.title}.`);
-  }
-
-  if (focus) {
-    selectedSentences.unshift(buildFocusSentence(item.category, focus));
-  }
-
-  const narrative = selectedSentences.join(" ");
-  return emphasizeSummary(narrative, item.category);
-}
-
-function composeOpinionLine(item: FeedItemNormalized): string {
-  const opinion = `Mon avis : ${buildCondescendingTake(item)}`;
-  return emphasizeSummary(opinion, item.category);
-}
-
-function buildFocusSentence(category: Category, focus: string): string {
-  if (category === "om") {
-    return `Le point cle concerne **${focus}**.`;
-  }
-  if (category === "ai_tech") {
-    return `La techno a suivre ici est **${focus}**.`;
-  }
-  return `L'element a retenir, c'est **${focus}**.`;
-}
-
-function buildCondescendingTake(item: FeedItemNormalized): string {
-  const templates: Record<Category, string[]> = {
-    om: [
-      "Soyons honnetes: c'est presente comme un tournant, mais on a deja vu ce scenario trop souvent.",
-      "Le storytelling est ambitieux, la realite du terrain sera probablement beaucoup moins epique.",
-      "Encore une annonce habillee en evenement majeur; on jugera quand il y aura du concret."
-    ],
-    ai_tech: [
-      "C'est vendu comme une revolution, alors que ca ressemble surtout a une iteration bien marketee.",
-      "Le discours est impressionnant, l'innovation nette l'est souvent beaucoup moins une fois le vernis retire.",
-      "Comme d'habitude en IA, beaucoup de promesses immediates et des limites qu'on decouvre juste apres."
-    ],
-    gaming: [
-      "Le marketing fait beaucoup de bruit, l'innovation utile est souvent plus discrete.",
-      "Sur le papier c'est grandiose, en pratique ca sent surtout la mise a jour attendue et rien de plus.",
-      "On nous vend un moment fort; au final ce sera probablement une annonce correcte, pas historique."
-    ]
-  };
-
-  const picks = templates[item.category];
-  const index = stableIndexFromLink(item.link, picks.length);
-  return picks[index];
-}
-
-function stableIndexFromLink(link: string, modulo: number): number {
-  let hash = 0;
-  for (let i = 0; i < link.length; i += 1) {
-    hash = (hash * 31 + link.charCodeAt(i)) >>> 0;
-  }
-  return modulo === 0 ? 0 : hash % modulo;
-}
-
-function extractKeyEntity(item: FeedItemNormalized): string | null {
-  const title = cleanupText(item.title);
-
-  if (item.category === "ai_tech") {
-    const aiTerm = findKnownTerm(title, AI_TERMS);
-    if (aiTerm) {
-      return aiTerm;
-    }
-  }
-
-  if (item.category === "gaming") {
-    const gamingTerm = findKnownTerm(title, GAMING_TERMS);
-    if (gamingTerm) {
-      return gamingTerm;
-    }
-  }
-
-  return extractProperNounPhrase(title);
-}
-
-function findKnownTerm(text: string, knownTerms: string[]): string | null {
-  for (const term of knownTerms) {
-    const regex = new RegExp(`\\b${escapeRegExp(term)}\\b`, "i");
-    const match = text.match(regex);
-    if (match?.[0]) {
-      return match[0];
-    }
-  }
-  return null;
-}
-
-function extractProperNounPhrase(text: string): string | null {
-  const matches = text.match(/\b[A-Z][A-Za-z0-9'-]+(?:\s+[A-Z][A-Za-z0-9'-]+){0,2}\b/g) ?? [];
-  for (const match of matches) {
-    if (!STOP_WORDS.has(match)) {
-      return match;
-    }
-  }
-  return null;
-}
-
-function emphasizeSummary(summary: string, category: Category): string {
-  let output = summary;
-  for (const keyword of HIGHLIGHT_KEYWORDS[category]) {
-    const escaped = escapeRegExp(keyword);
-    const regex = new RegExp(`(${escaped})`, "gi");
-    output = output.replace(regex, "**$1**");
-  }
-  return output;
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function safeHostname(url: string): string {
