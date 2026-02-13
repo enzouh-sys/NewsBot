@@ -14,6 +14,7 @@ import { logger } from "./utils/logger.js";
 const RSS_FETCH_LIMIT = 10;
 const RSS_TIMEOUT_MS = 8000;
 const MAX_RETRIES = 1;
+const RECENT_HOURS = 72;
 const SUMMARY_SENTENCE_MAX = 170;
 const BULLET = "\u2022";
 
@@ -194,7 +195,6 @@ const STOP_WORDS = new Set([
 type DigestConfig = {
   DISCORD_CHANNEL_ID: string;
   STRICT_MODE: boolean;
-  TIMEZONE: string;
 };
 
 export type DigestOptions = {
@@ -234,7 +234,7 @@ export async function buildDigestMessage(config: DigestConfig, options?: DigestO
   const cache = new LinkCache();
   await cache.init();
 
-  const allItems = await fetchAllItems(feeds, config.STRICT_MODE, config.TIMEZONE);
+  const allItems = await fetchAllItems(feeds, config.STRICT_MODE);
   const deduped = dedupeByCache(allItems, cache);
   const selected = applyPerSectionSelection(deduped, options);
 
@@ -247,11 +247,7 @@ export async function buildDigestMessage(config: DigestConfig, options?: DigestO
   return formatDigest(selected, options?.category ?? "all");
 }
 
-async function fetchAllItems(
-  feeds: FeedConfig,
-  strictMode: boolean,
-  timeZone: string
-): Promise<FeedItemNormalized[]> {
+async function fetchAllItems(feeds: FeedConfig, strictMode: boolean): Promise<FeedItemNormalized[]> {
   const feedEntries: FeedWithMeta[] = [
     ...feeds.om.map((feedUrl) => ({ feedUrl, category: "om" as const })),
     ...feeds.ai_tech.map((feedUrl) => ({ feedUrl, category: "ai_tech" as const })),
@@ -260,7 +256,7 @@ async function fetchAllItems(
 
   const items: FeedItemNormalized[] = [];
   for (const entry of feedEntries) {
-    const fetched = await fetchOneFeed(entry.feedUrl, entry.category, strictMode, timeZone);
+    const fetched = await fetchOneFeed(entry.feedUrl, entry.category, strictMode);
     items.push(...fetched);
   }
   return items;
@@ -269,23 +265,19 @@ async function fetchAllItems(
 async function fetchOneFeed(
   feedUrl: string,
   category: Category,
-  strictMode: boolean,
-  timeZone: string
+  strictMode: boolean
 ): Promise<FeedItemNormalized[]> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
     try {
       const feed = await parser.parseURL(feedUrl);
       const sourceName = feed.title ?? safeHostname(feedUrl);
-      const yesterdayRange = getYesterdayRangeUtc(timeZone);
+      const recentCutoff = Date.now() - RECENT_HOURS * 60 * 60 * 1000;
 
       const normalized = feed.items
         .slice(0, RSS_FETCH_LIMIT)
         .map((item) => normalizeItem(item, sourceName, category))
         .filter((item): item is FeedItemNormalized => item !== null)
-        .filter((item) => {
-          const ts = Date.parse(item.isoDate);
-          return ts >= yesterdayRange.startMs && ts <= yesterdayRange.endMs;
-        });
+        .filter((item) => Date.parse(item.isoDate) >= recentCutoff);
 
       if (!strictMode) {
         return normalized;
@@ -628,79 +620,4 @@ function safeHostname(url: string): string {
   } catch {
     return "unknown-source";
   }
-}
-
-function getYesterdayRangeUtc(timeZone: string): { startMs: number; endMs: number } {
-  const now = new Date();
-  const localNow = getZonedParts(now, timeZone);
-  const todayNoonUtc = Date.UTC(localNow.year, localNow.month - 1, localNow.day, 12, 0, 0);
-  const yesterdayNoon = new Date(todayNoonUtc - 24 * 60 * 60 * 1000);
-
-  const year = yesterdayNoon.getUTCFullYear();
-  const month = yesterdayNoon.getUTCMonth() + 1;
-  const day = yesterdayNoon.getUTCDate();
-
-  const start = zonedDateTimeToUtc(timeZone, year, month, day, 0, 0, 0);
-  const end = zonedDateTimeToUtc(timeZone, year, month, day, 23, 59, 59);
-
-  return { startMs: start.getTime(), endMs: end.getTime() };
-}
-
-function zonedDateTimeToUtc(
-  timeZone: string,
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  second: number
-): Date {
-  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
-  const offsetMs = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
-  return new Date(utcGuess - offsetMs);
-}
-
-function getTimeZoneOffsetMs(date: Date, timeZone: string): number {
-  const parts = getZonedParts(date, timeZone);
-  const zonedAsUtcMs = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second
-  );
-  return zonedAsUtcMs - date.getTime();
-}
-
-function getZonedParts(
-  date: Date,
-  timeZone: string
-): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
-
-  const values = new Map<string, string>();
-  for (const part of dtf.formatToParts(date)) {
-    if (part.type !== "literal") {
-      values.set(part.type, part.value);
-    }
-  }
-
-  return {
-    year: Number(values.get("year")),
-    month: Number(values.get("month")),
-    day: Number(values.get("day")),
-    hour: Number(values.get("hour")),
-    minute: Number(values.get("minute")),
-    second: Number(values.get("second"))
-  };
 }
