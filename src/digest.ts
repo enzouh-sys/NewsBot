@@ -162,6 +162,18 @@ const OM_TOPIC_STOPWORDS = new Set([
   "sport"
 ]);
 
+const OM_PERSON_NOISE = new Set([
+  "officiel",
+  "om",
+  "ligue",
+  "foot",
+  "football",
+  "mercato",
+  "canal",
+  "goal",
+  "sports"
+]);
+
 const OM_DEPARTURE_KEYWORDS = [
   "n est plus",
   "quitte",
@@ -714,7 +726,8 @@ function buildOmClusterKey(item: FeedItemNormalized): string {
   const normalizedTitle = normalizeOmTitleForTopic(item.title);
   const normalizedSummary = normalizeOmTitleForTopic(item.summary);
   const text = `${normalizedTitle} ${normalizedSummary}`;
-  const entity = extractOmEntity(text);
+  const person = extractOmPersonName(text);
+  const entity = person ? normalizeName(person) : extractOmEntity(text);
   const event = extractOmEvent(text);
   return `${entity}|${event}`;
 }
@@ -758,6 +771,33 @@ function extractOmEntity(text: string): string {
   }
 
   return "sujet-om";
+}
+
+function extractOmPersonName(text: string): string | null {
+  const cleaned = cleanupText(text).replace(/[’']/g, "'");
+  const candidates =
+    cleaned.match(/\b[A-Z][\p{L}'-]+(?:\s+(?:de|du|des|d'))?\s+[A-Z][\p{L}'-]+\b/gu) ?? [];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeName(candidate);
+    const tokens = normalized.split(" ").filter(Boolean);
+    if (tokens.length < 2) {
+      continue;
+    }
+
+    const first = tokens[0] ?? "";
+    const last = tokens[tokens.length - 1] ?? "";
+    if (OM_PERSON_NOISE.has(first) || OM_PERSON_NOISE.has(last)) {
+      continue;
+    }
+    if (tokens.every((token) => OM_PERSON_NOISE.has(token))) {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  return null;
 }
 
 function extractOmEvent(text: string): string {
@@ -904,9 +944,14 @@ async function applyDailyOmNameBan(
 }
 
 function extractOmPrimaryName(item: FeedItemNormalized): string | null {
+  const person = extractOmPersonName(`${item.title} ${item.summary}`);
+  if (person) {
+    return person;
+  }
+
   const cluster = buildOmClusterKey(item);
   const [entity] = cluster.split("|");
-  if (!entity || entity === "sujet-om") {
+  if (!entity || entity === "sujet-om" || entity === "general") {
     return null;
   }
   return entity;
