@@ -126,6 +126,30 @@ const OM_OFFICIAL_KEYWORDS = [
   "annonce"
 ];
 
+const OM_TOPIC_STOPWORDS = new Set([
+  "de",
+  "du",
+  "des",
+  "la",
+  "le",
+  "les",
+  "un",
+  "une",
+  "et",
+  "ou",
+  "a",
+  "au",
+  "aux",
+  "sur",
+  "pour",
+  "avec",
+  "dans",
+  "par",
+  "om",
+  "marseille",
+  "olympique"
+]);
+
 const HIGHLIGHT_KEYWORDS: Record<Category, string[]> = {
   om: [
     "officiel",
@@ -450,8 +474,9 @@ function applyPerSectionSelection(
         }
         return Date.parse(b.isoDate) - Date.parse(a.isoDate);
       });
-      const sectionLimit = options?.limit ?? Math.min(OM_MAX_ITEMS, omSorted.length);
-      selected.push(...omSorted.slice(0, sectionLimit));
+      const omUnique = dedupeOmByTopic(omSorted);
+      const sectionLimit = options?.limit ?? Math.min(OM_MAX_ITEMS, omUnique.length);
+      selected.push(...omUnique.slice(0, sectionLimit));
       continue;
     }
 
@@ -601,6 +626,69 @@ function matchesDomain(host: string, domains: string[]): boolean {
 function containsAny(text: string, words: string[]): boolean {
   const lowered = text.toLowerCase();
   return words.some((word) => lowered.includes(word.toLowerCase()));
+}
+
+function dedupeOmByTopic(items: FeedItemNormalized[]): FeedItemNormalized[] {
+  const kept: FeedItemNormalized[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const item of items) {
+    const key = buildOmTopicKey(item);
+    if (seenKeys.has(key)) {
+      continue;
+    }
+
+    // Fuzzy dedupe to avoid near-duplicate headlines about the same OM topic.
+    const isNearDuplicate = kept.some((existing) => {
+      const sim = tokenJaccardSimilarity(omTopicTokens(item), omTopicTokens(existing));
+      return sim >= 0.6;
+    });
+    if (isNearDuplicate) {
+      continue;
+    }
+
+    seenKeys.add(key);
+    kept.push(item);
+  }
+
+  return kept;
+}
+
+function buildOmTopicKey(item: FeedItemNormalized): string {
+  const tokens = omTopicTokens(item);
+  return tokens.slice(0, 8).join("|");
+}
+
+function omTopicTokens(item: FeedItemNormalized): string[] {
+  const text = `${item.title} ${item.summary}`
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text
+    .split(" ")
+    .filter((token) => token.length > 2)
+    .filter((token) => !OM_TOPIC_STOPWORDS.has(token));
+}
+
+function tokenJaccardSimilarity(a: string[], b: string[]): number {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  if (setA.size === 0 || setB.size === 0) {
+    return 0;
+  }
+
+  let intersection = 0;
+  for (const token of setA) {
+    if (setB.has(token)) {
+      intersection += 1;
+    }
+  }
+  const union = new Set([...setA, ...setB]).size;
+  return union === 0 ? 0 : intersection / union;
 }
 
 function formatDigest(
