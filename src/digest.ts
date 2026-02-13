@@ -225,8 +225,47 @@ export async function sendDigestToConfiguredChannel(
   }
 
   const digest = await buildDigestMessage(config, options);
-  await channel.send(digest);
+  await sendInChunks(channel, digest);
   return digest;
+}
+
+async function sendInChunks(
+  channel: Extract<Awaited<ReturnType<Client["channels"]["fetch"]>>, { type: ChannelType.GuildText }>,
+  content: string
+): Promise<void> {
+  const max = 1900;
+  if (content.length <= max) {
+    await channel.send(content);
+    return;
+  }
+
+  const lines = content.split("\n");
+  let current = "";
+
+  for (const line of lines) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (candidate.length <= max) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      await channel.send(current);
+      current = line;
+      continue;
+    }
+
+    let remaining = line;
+    while (remaining.length > max) {
+      await channel.send(remaining.slice(0, max));
+      remaining = remaining.slice(max);
+    }
+    current = remaining;
+  }
+
+  if (current) {
+    await channel.send(current);
+  }
 }
 
 export async function buildDigestMessage(config: DigestConfig, options?: DigestOptions): Promise<string> {
