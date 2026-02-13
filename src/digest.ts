@@ -24,7 +24,7 @@ const BULLET = "\u2022";
 
 const BASE_ITEMS_PER_SECTION = 3;
 const MAX_ITEMS_PER_SECTION = 5;
-const OM_MAX_ITEMS = 12;
+const OM_MAX_ITEMS = 5;
 
 const INTRO_LINES = [
   "Je me suis leve tot pour fouiller les flux, comme ca t'as juste a lire.",
@@ -147,8 +147,31 @@ const OM_TOPIC_STOPWORDS = new Set([
   "par",
   "om",
   "marseille",
-  "olympique"
+  "olympique",
+  "officiel",
+  "communique",
+  "communiquee",
+  "canal",
+  "goal",
+  "mercato",
+  "ligue",
+  "football",
+  "sport"
 ]);
+
+const OM_DEPARTURE_KEYWORDS = [
+  "n est plus",
+  "quitte",
+  "depart",
+  "se separe",
+  "separe",
+  "licencie",
+  "fin de collaboration",
+  "arrete sa collaboration"
+];
+
+const OM_TRANSFER_KEYWORDS = ["transfert", "mercato", "accord", "negociation", "signe", "signature"];
+const OM_INJURY_KEYWORDS = ["blessure", "indisponible", "forfait", "absence"];
 
 const HIGHLIGHT_KEYWORDS: Record<Category, string[]> = {
   om: [
@@ -631,6 +654,7 @@ function containsAny(text: string, words: string[]): boolean {
 function dedupeOmByTopic(items: FeedItemNormalized[]): FeedItemNormalized[] {
   const kept: FeedItemNormalized[] = [];
   const seenKeys = new Set<string>();
+  const seenClusters = new Set<string>();
 
   for (const item of items) {
     const key = buildOmTopicKey(item);
@@ -638,16 +662,22 @@ function dedupeOmByTopic(items: FeedItemNormalized[]): FeedItemNormalized[] {
       continue;
     }
 
+    const cluster = buildOmClusterKey(item);
+    if (seenClusters.has(cluster)) {
+      continue;
+    }
+
     // Fuzzy dedupe to avoid near-duplicate headlines about the same OM topic.
     const isNearDuplicate = kept.some((existing) => {
       const sim = tokenJaccardSimilarity(omTopicTokens(item), omTopicTokens(existing));
-      return sim >= 0.6;
+      return sim >= 0.45;
     });
     if (isNearDuplicate) {
       continue;
     }
 
     seenKeys.add(key);
+    seenClusters.add(cluster);
     kept.push(item);
   }
 
@@ -656,11 +686,12 @@ function dedupeOmByTopic(items: FeedItemNormalized[]): FeedItemNormalized[] {
 
 function buildOmTopicKey(item: FeedItemNormalized): string {
   const tokens = omTopicTokens(item);
-  return tokens.slice(0, 8).join("|");
+  return tokens.slice(0, 6).join("|");
 }
 
 function omTopicTokens(item: FeedItemNormalized): string[] {
-  const text = `${item.title} ${item.summary}`
+  const normalizedTitle = normalizeOmTitleForTopic(item.title);
+  const text = `${normalizedTitle}`
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -672,6 +703,78 @@ function omTopicTokens(item: FeedItemNormalized): string[] {
     .split(" ")
     .filter((token) => token.length > 2)
     .filter((token) => !OM_TOPIC_STOPWORDS.has(token));
+}
+
+function buildOmClusterKey(item: FeedItemNormalized): string {
+  const normalizedTitle = normalizeOmTitleForTopic(item.title);
+  const normalizedSummary = normalizeOmTitleForTopic(item.summary);
+  const text = `${normalizedTitle} ${normalizedSummary}`;
+  const entity = extractOmEntity(text);
+  const event = extractOmEvent(text);
+  return `${entity}|${event}`;
+}
+
+function normalizeOmTitleForTopic(input: string): string {
+  const clean = cleanupText(input).replace(/\s+/g, " ").trim();
+  // Remove typical source suffixes from aggregated headlines: " ... - MediaName"
+  const withoutSource = clean.replace(/\s[-–—]\s[^-–—]{2,80}$/, "");
+  return withoutSource;
+}
+
+function extractOmEntity(text: string): string {
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s'-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = normalized.split(" ").filter((t) => t.length > 1);
+  for (let i = 0; i < tokens.length; i += 1) {
+    const first = tokens[i];
+    const second = tokens[i + 1];
+    const third = tokens[i + 2];
+
+    if (!first || OM_TOPIC_STOPWORDS.has(first)) {
+      continue;
+    }
+
+    if (second === "de" || second === "du" || second === "des") {
+      if (third && !OM_TOPIC_STOPWORDS.has(third)) {
+        return `${first} ${second} ${third}`;
+      }
+      continue;
+    }
+
+    if (second && !OM_TOPIC_STOPWORDS.has(second)) {
+      return `${first} ${second}`;
+    }
+  }
+
+  return "sujet-om";
+}
+
+function extractOmEvent(text: string): string {
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+
+  if (containsAny(normalized, OM_DEPARTURE_KEYWORDS)) {
+    return "depart";
+  }
+  if (containsAny(normalized, OM_TRANSFER_KEYWORDS)) {
+    return "transfert";
+  }
+  if (containsAny(normalized, OM_INJURY_KEYWORDS)) {
+    return "blessure";
+  }
+  if (containsAny(normalized, ["communique", "officiel"])) {
+    return "officiel";
+  }
+  return "general";
 }
 
 function tokenJaccardSimilarity(a: string[], b: string[]): number {
