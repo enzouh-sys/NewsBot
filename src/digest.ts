@@ -1,4 +1,6 @@
 import { ChannelType, Client } from "discord.js";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import Parser from "rss-parser";
 import { LinkCache } from "./cache.js";
 import {
@@ -25,6 +27,7 @@ const BULLET = "\u2022";
 const BASE_ITEMS_PER_SECTION = 3;
 const MAX_ITEMS_PER_SECTION = 5;
 const OM_MAX_ITEMS = 5;
+const OM_DAILY_NAMES_FILE = path.resolve(process.cwd(), "data", "om-daily-names.json");
 
 const INTRO_LINES = [
   "Je me suis leve tot pour fouiller les flux, comme ca t'as juste a lire.",
@@ -227,6 +230,7 @@ const HIGHLIGHT_KEYWORDS: Record<Category, string[]> = {
 type DigestConfig = {
   DISCORD_CHANNEL_ID: string;
   STRICT_MODE: boolean;
+  TIMEZONE?: string;
 };
 
 export type DigestOptions = {
@@ -320,14 +324,15 @@ export async function buildDigestMessage(config: DigestConfig, options?: DigestO
   const allItems = await fetchAllItems(feeds, omSources, config.STRICT_MODE);
   const deduped = dedupeByCache(allItems, cache);
   const selected = applyPerSectionSelection(deduped, options, omSources);
+  const finalSelected = await applyDailyOmNameBan(selected, config.TIMEZONE ?? "Europe/Paris");
 
-  for (const item of selected) {
+  for (const item of finalSelected) {
     cache.add(item.link, item.isoDate);
   }
   cache.cleanup();
   await cache.persist();
 
-  return formatDigest(selected, options?.category ?? "all", omSources);
+  return formatDigest(finalSelected, options?.category ?? "all", omSources);
 }
 
 async function fetchAllItems(
@@ -857,4 +862,93 @@ function safeHostname(url: string): string {
   } catch {
     return "unknown-source";
   }
+}
+
+type OmDailyNamesState = {
+  day: string;
+  names: string[];
+};
+
+async function applyDailyOmNameBan(
+  items: FeedItemNormalized[],
+  timeZone: string
+): Promise<FeedItemNormalized[]> {
+  const dayKey = getDayKey(timeZone);
+  const state = await loadOmDailyNamesState(dayKey);
+  const seenNames = new Set(state.names.map((name) => normalizeName(name)));
+
+  const out: FeedItemNormalized[] = [];
+  for (const item of items) {
+    if (item.category !== "om") {
+      out.push(item);
+      continue;
+    }
+
+    const name = extractOmPrimaryName(item);
+    if (!name) {
+      out.push(item);
+      continue;
+    }
+
+    const key = normalizeName(name);
+    if (seenNames.has(key)) {
+      continue;
+    }
+
+    seenNames.add(key);
+    out.push(item);
+  }
+
+  await saveOmDailyNamesState({ day: dayKey, names: [...seenNames] });
+  return out;
+}
+
+function extractOmPrimaryName(item: FeedItemNormalized): string | null {
+  const cluster = buildOmClusterKey(item);
+  const [entity] = cluster.split("|");
+  if (!entity || entity === "sujet-om") {
+    return null;
+  }
+  return entity;
+}
+
+function normalizeName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getDayKey(timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+async function loadOmDailyNamesState(currentDay: string): Promise<OmDailyNamesState> {
+  try {
+    const raw = await readFile(OM_DAILY_NAMES_FILE, "utf8");
+    const parsed = JSON.parse(raw) as Partial<OmDailyNamesState>;
+    if (parsed.day !== currentDay) {
+      return { day: currentDay, names: [] };
+    }
+    if (!Array.isArray(parsed.names) || parsed.names.some((entry) => typeof entry !== "string")) {
+      return { day: currentDay, names: [] };
+    }
+    return { day: currentDay, names: parsed.names };
+  } catch {
+    return { day: currentDay, names: [] };
+  }
+}
+
+async function saveOmDailyNamesState(state: OmDailyNamesState): Promise<void> {
+  const dir = path.dirname(OM_DAILY_NAMES_FILE);
+  await mkdir(dir, { recursive: true });
+  await writeFile(OM_DAILY_NAMES_FILE, JSON.stringify(state, null, 2), "utf8");
 }
