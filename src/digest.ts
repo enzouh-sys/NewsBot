@@ -164,6 +164,9 @@ const OM_TOPIC_STOPWORDS = new Set([
 
 const OM_PERSON_NOISE = new Set([
   "officiel",
+  "annonce",
+  "communique",
+  "communiqué",
   "om",
   "ligue",
   "foot",
@@ -171,7 +174,13 @@ const OM_PERSON_NOISE = new Set([
   "mercato",
   "canal",
   "goal",
-  "sports"
+  "sports",
+  "entraineur",
+  "entraîneur",
+  "quitte",
+  "depart",
+  "licenciement",
+  "collaboration"
 ]);
 
 const OM_DEPARTURE_KEYWORDS = [
@@ -774,30 +783,57 @@ function extractOmEntity(text: string): string {
 }
 
 function extractOmPersonName(text: string): string | null {
-  const cleaned = cleanupText(text).replace(/[’']/g, "'");
-  const candidates =
-    cleaned.match(/\b[A-Z][\p{L}'-]+(?:\s+(?:de|du|des|d'))?\s+[A-Z][\p{L}'-]+\b/gu) ?? [];
+  const normalized = normalizeName(text);
+  const tokens = normalized.split(" ").filter(Boolean);
 
-  for (const candidate of candidates) {
-    const normalized = normalizeName(candidate);
-    const tokens = normalized.split(" ").filter(Boolean);
-    if (tokens.length < 2) {
+  // Priority 1: "prenom de nom" / "prenom du nom" / "prenom des nom"
+  for (let i = 0; i <= tokens.length - 3; i += 1) {
+    const a = tokens[i] ?? "";
+    const b = tokens[i + 1] ?? "";
+    const c = tokens[i + 2] ?? "";
+    if (!a || !b || !c) {
       continue;
     }
-
-    const first = tokens[0] ?? "";
-    const last = tokens[tokens.length - 1] ?? "";
-    if (OM_PERSON_NOISE.has(first) || OM_PERSON_NOISE.has(last)) {
+    if (b !== "de" && b !== "du" && b !== "des" && b !== "d") {
       continue;
     }
-    if (tokens.every((token) => OM_PERSON_NOISE.has(token))) {
+    if (isPersonNoise(a) || isPersonNoise(c)) {
       continue;
     }
+    return `${capitalizeToken(a)} ${b} ${capitalizeToken(c)}`;
+  }
 
-    return candidate;
+  // Priority 2: "prenom nom" classiques
+  for (let i = 0; i <= tokens.length - 2; i += 1) {
+    const a = tokens[i] ?? "";
+    const b = tokens[i + 1] ?? "";
+    if (!a || !b) {
+      continue;
+    }
+    if (b === "de" || b === "du" || b === "des" || b === "d") {
+      continue;
+    }
+    if (isPersonNoise(a) || isPersonNoise(b)) {
+      continue;
+    }
+    return `${capitalizeToken(a)} ${capitalizeToken(b)}`;
   }
 
   return null;
+}
+
+function isPersonNoise(token: string): boolean {
+  if (token.length <= 2) {
+    return true;
+  }
+  return OM_PERSON_NOISE.has(token);
+}
+
+function capitalizeToken(token: string): string {
+  if (!token) {
+    return token;
+  }
+  return `${token.charAt(0).toUpperCase()}${token.slice(1)}`;
 }
 
 function extractOmEvent(text: string): string {
